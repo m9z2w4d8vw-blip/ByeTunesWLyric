@@ -98,7 +98,7 @@ enum LyricsDeliveryMode: String, CaseIterable {
 
 // MARK: - The row
 
-struct LyricsRow {
+struct LyricsSyncRow {
     var payload: String
     var storeLyricsAvailable: Int
     var timeSyncedLyricsAvailable: Int
@@ -156,7 +156,7 @@ enum LyricsSyncWriter {
         trackDurationMs: Int?,
         hasCatalogMatch: Bool,
         mode: LyricsDeliveryMode = .current
-    ) -> LyricsRow {
+    ) -> LyricsSyncRow {
 
         let raw = (rawLyrics ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -166,7 +166,7 @@ enum LyricsSyncWriter {
         // whatsoever, which is strictly worse than static text.
         if mode == .appleCatalog {
             if hasCatalogMatch {
-                return LyricsRow(
+                return LyricsSyncRow(
                     payload: "",
                     storeLyricsAvailable: 1,
                     timeSyncedLyricsAvailable: 1,
@@ -181,7 +181,7 @@ enum LyricsSyncWriter {
             // No payload and no catalog match. Say so honestly: claiming
             // availability over an empty column is what produces the
             // "lyrics button does nothing" state.
-            return LyricsRow(
+            return LyricsSyncRow(
                 payload: "",
                 storeLyricsAvailable: hasCatalogMatch ? 1 : 0,
                 timeSyncedLyricsAvailable: 0,
@@ -193,12 +193,12 @@ enum LyricsSyncWriter {
         // Already TTML (a provider handed us Apple's own payload, or a
         // previous run cached one) — pass it straight through.
         if LyricsSyncFormat.isTTML(raw) {
-            return LyricsRow(
+            return LyricsSyncRow(
                 payload: raw,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
-                checksum: checksumEnabled ? LyricsRow.fnv1a32(raw) : 0,
+                checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(raw) : 0,
                 extendedLyricsAttribute: raw.contains(#"itunes:timing="Word""#) ? 1 : nil)
         }
 
@@ -214,23 +214,23 @@ enum LyricsSyncWriter {
 
             Logger.shared.log(
                 "[LyricsSync] TTML built: \(parsed.lines.count) lines, granularity=\(parsed.granularity.rawValue), \(xml.count) bytes")
-            return LyricsRow(
+            return LyricsSyncRow(
                 payload: xml,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
-                checksum: checksumEnabled ? LyricsRow.fnv1a32(xml) : 0,
+                checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(xml) : 0,
                 extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil)
 
         case .rawLRC:
             guard parsed.granularity != .none,
                   let lrc = LyricsSyncFormat.lrc(from: parsed) else { break }
-            return LyricsRow(
+            return LyricsSyncRow(
                 payload: lrc,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
-                checksum: checksumEnabled ? LyricsRow.fnv1a32(lrc) : 0,
+                checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(lrc) : 0,
                 extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil)
 
         case .appleCatalog, .plainOnly:
@@ -243,7 +243,7 @@ enum LyricsSyncWriter {
         // lets the renderer pick the static layout immediately instead of
         // waiting on a timed payload that never arrives.
         let plain = parsed.granularity == .none ? cleaned : parsed.plainText
-        return LyricsRow(
+        return LyricsSyncRow(
             payload: plain,
             storeLyricsAvailable: 1,
             timeSyncedLyricsAvailable: 0,
@@ -265,7 +265,7 @@ enum LyricsSyncWriter {
     static func write(
         db: OpaquePointer?,
         itemPid: Int64,
-        row: LyricsRow
+        row: LyricsSyncRow
     ) -> Bool {
         let hasDownloadedColumn = columnExists(
             db: db, table: "lyrics", column: "downloaded_catalog_lyrics_available")
