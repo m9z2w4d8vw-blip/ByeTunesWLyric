@@ -1096,6 +1096,18 @@ private struct DownloaderSettingsScreen: View {
     @State private var infoAlertMessage = ""
     @State private var showingInfoAlert = false
 
+    // Timed-lyrics experiment. Stored by raw value so the enum can gain
+    // cases without a migration; LyricsDeliveryMode.current falls back to
+    // the legacy appleSubscriptionLyrics flag when this is empty.
+    @AppStorage("lyricsDeliveryMode") private var lyricsDeliveryMode = ""
+    @AppStorage("lyricsFlagOverride") private var lyricsFlagOverride = ""
+    @State private var diagnosticsRunning = false
+    @State private var diagnosticsStatus = ""
+
+    private var selectedLyricsMode: LyricsDeliveryMode {
+        LyricsDeliveryMode(rawValue: lyricsDeliveryMode) ?? LyricsDeliveryMode.current
+    }
+
     private func showInfo(_ title: String, _ message: String) {
         infoAlertTitle = title
         infoAlertMessage = message
@@ -1305,6 +1317,153 @@ private struct DownloaderSettingsScreen: View {
                             }
                         }
                         .toggleStyle(SwitchToggleStyle(tint: .accentColor))
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        // MARK: Timed lyrics (experimental)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Timed Lyrics")
+                                        .font(.body)
+                                    Text("How lyrics are stored on the device.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    showInfo(
+                                        "Timed Lyrics",
+                                        "Static lyrics only writes plain text — this is the original behaviour and never highlights.\n\nLocal TTML converts synced lyrics into Apple's own timed-text format and stores them on the device. Experimental: whether the Music app renders a locally-written payload is unverified.\n\nLocal LRC writes the raw [mm:ss.xx] text instead. A long shot, but free to test.\n\nApple Music leaves the lyrics column empty so the Music app fetches Apple's own timed lyrics. Needs a subscription and a matched catalog track.\n\nChanges apply to songs injected from now on — re-inject a track to update it."
+                                    )
+                                } label: {
+                                    infoButton
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            Picker("Timed Lyrics", selection: $lyricsDeliveryMode) {
+                                ForEach(LyricsDeliveryMode.allCases, id: \.rawValue) { mode in
+                                    Text(mode.label).tag(mode.rawValue)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+
+                            if selectedLyricsMode == .cachedTTML || selectedLyricsMode == .rawLRC {
+                                Text("Experimental. Check Debug Logs after injecting — look for the [LyricsSync] lines.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        // MARK: Flag override (bisecting tool)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Flag Override")
+                                        .font(.body)
+                                    Text("store,timed,cached — blank to leave alone.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    showInfo(
+                                        "Flag Override",
+                                        "Forces the three availability flags on the lyrics row, as three comma-separated numbers — for example 1,1,1.\n\nThese columns are undocumented, and the wrong combination looks exactly like a broken payload from the outside. This lets you try all eight combinations from one build instead of rebuilding for each guess.\n\nLeave blank unless you are deliberately testing."
+                                    )
+                                } label: {
+                                    infoButton
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            TextField("e.g. 1,1,1", text: $lyricsFlagOverride)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.numbersAndPunctuation)
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        // MARK: Diagnostics
+
+                        Button {
+                            guard !diagnosticsRunning else { return }
+                            diagnosticsRunning = true
+                            diagnosticsStatus = "Pulling the library database..."
+                            LyricsSyncDiagnostics.run { summary in
+                                diagnosticsRunning = false
+                                diagnosticsStatus = summary
+                                    .components(separatedBy: "--- VERDICT ---")
+                                    .last?
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    ?? "Done — see Debug Logs."
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "stethoscope")
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                        .frame(width: 28)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Run Lyrics Diagnostics")
+                                            .font(.body)
+                                            .foregroundColor(.primary)
+                                        Text("Reads the device library and reports what is stored.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    if diagnosticsRunning {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundColor(Color(.systemGray3))
+                                    }
+                                }
+
+                                if !diagnosticsStatus.isEmpty {
+                                    Text(diagnosticsStatus)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 16)
 

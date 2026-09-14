@@ -140,6 +140,32 @@ enum LyricsSyncWriter {
         UserDefaults.standard.object(forKey: "lyricsChecksumEnabled") as? Bool ?? true
     }
 
+    /// Force the three `lyrics` flags, as `"store,timed,cached"` — e.g.
+    /// `"1,1,1"`. Lets you bisect all eight combinations from one build
+    /// instead of rebuilding per guess, which matters because the flags
+    /// are undocumented and the wrong triple looks identical to a broken
+    /// payload from the outside.
+    ///
+    /// Set through Settings → Timed Lyrics → Flag Override. Empty means
+    /// "use whatever the mode chose".
+    static var flagOverride: (store: Int, timed: Int, cached: Int)? {
+        guard let raw = UserDefaults.standard.string(forKey: "lyricsFlagOverride"),
+              !raw.isEmpty else { return nil }
+        let parts = raw.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 3 else { return nil }
+        return (parts[0], parts[1], parts[2])
+    }
+
+    private static func applyOverride(_ row: LyricsSyncRow) -> LyricsSyncRow {
+        guard let o = flagOverride else { return row }
+        var r = row
+        r.storeLyricsAvailable = o.store
+        r.timeSyncedLyricsAvailable = o.timed
+        r.downloadedCatalogLyricsAvailable = o.cached
+        Logger.shared.log("[LyricsSync] flag override applied: store=\(o.store) timed=\(o.timed) cached=\(o.cached)")
+        return r
+    }
+
     /// Build the row for one song.
     ///
     /// - Parameters:
@@ -160,19 +186,34 @@ enum LyricsSyncWriter {
 
         let raw = (rawLyrics ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Every decision this function makes gets logged. When the
+        // karaoke view stays static there are six separate places the
+        // chain can break — no synced source, a parser miss, the wrong
+        // mode, a bad flag triple, a failed write, or the renderer simply
+        // not reading the column — and without this you cannot tell them
+        // apart from the outside.
+        Logger.shared.log("[LyricsSync] --- \(title ?? "untitled") ---")
+        Logger.shared.log("[LyricsSync] mode=\(mode.rawValue) catalogMatch=\(hasCatalogMatch) rawBytes=\(raw.count) durationMs=\(trackDurationMs ?? -1)")
+        if raw.isEmpty {
+            Logger.shared.log("[LyricsSync] no lyrics text at all — check that Fetch Lyrics is on and the provider returned something")
+        } else {
+            let peek = raw.prefix(90).replacingOccurrences(of: "\n", with: "|")
+            Logger.shared.log("[LyricsSync] rawHead: \(peek)")
+        }
+
         // Subscription mode: empty column on purpose, so the local text
         // cannot shadow the catalog payload. Only honour it when there IS
         // a catalog match — otherwise it produces a track with no lyrics
         // whatsoever, which is strictly worse than static text.
         if mode == .appleCatalog {
             if hasCatalogMatch {
-                return LyricsSyncRow(
+                return applyOverride(LyricsSyncRow(
                     payload: "",
                     storeLyricsAvailable: 1,
                     timeSyncedLyricsAvailable: 1,
                     downloadedCatalogLyricsAvailable: 0,
                     checksum: 0,
-                    extendedLyricsAttribute: 1)
+                    extendedLyricsAttribute: 1))
             }
             Logger.shared.log("[LyricsSync] appleCatalog requested but no catalog match — falling back")
         }
@@ -181,29 +222,36 @@ enum LyricsSyncWriter {
             // No payload and no catalog match. Say so honestly: claiming
             // availability over an empty column is what produces the
             // "lyrics button does nothing" state.
-            return LyricsSyncRow(
+            return applyOverride(LyricsSyncRow(
                 payload: "",
                 storeLyricsAvailable: hasCatalogMatch ? 1 : 0,
                 timeSyncedLyricsAvailable: 0,
                 downloadedCatalogLyricsAvailable: 0,
                 checksum: 0,
-                extendedLyricsAttribute: nil)
+                extendedLyricsAttribute: nil))
         }
 
         // Already TTML (a provider handed us Apple's own payload, or a
         // previous run cached one) — pass it straight through.
         if LyricsSyncFormat.isTTML(raw) {
-            return LyricsSyncRow(
+            Logger.shared.log("[LyricsSync] input is already TTML — passing through")
+            return applyOverride(LyricsSyncRow(
                 payload: raw,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
                 checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(raw) : 0,
-                extendedLyricsAttribute: raw.contains(#"itunes:timing="Word""#) ? 1 : nil)
+                extendedLyricsAttribute: raw.contains(#"itunes:timing="Word""#) ? 1 : nil))
         }
 
         let cleaned = LyricsSyncFormat.cleanPreservingTiming(raw, title: title, artist: artist)
         let parsed = LyricsSyncFormat.parseAny(cleaned)
+        Logger.shared.log("[LyricsSync] parsed: granularity=\(parsed.granularity.rawValue) lines=\(parsed.lines.count) wordTimedLines=\(parsed.lines.filter(\.hasWordTiming).count)")
+        if parsed.granularity == .none && !cleaned.isEmpty {
+            Logger.shared.log("[LyricsSync] NO TIMING DETECTED — the provider returned plain text. LRCLIB has no synced version of this track, or cleaning removed the stamps.")
+            let peek = cleaned.prefix(90).replacingOccurrences(of: "\n", with: "|")
+            Logger.shared.log("[LyricsSync] cleanedHead: \(peek)")
+        }
 
         switch mode {
         case .cachedTTML:
@@ -214,24 +262,25 @@ enum LyricsSyncWriter {
 
             Logger.shared.log(
                 "[LyricsSync] TTML built: \(parsed.lines.count) lines, granularity=\(parsed.granularity.rawValue), \(xml.count) bytes")
-            return LyricsSyncRow(
+            return applyOverride(LyricsSyncRow(
                 payload: xml,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
                 checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(xml) : 0,
-                extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil)
+                extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil))
 
         case .rawLRC:
             guard parsed.granularity != .none,
                   let lrc = LyricsSyncFormat.lrc(from: parsed) else { break }
-            return LyricsSyncRow(
+            Logger.shared.log("[LyricsSync] emitting raw LRC, \(lrc.count) bytes")
+            return applyOverride(LyricsSyncRow(
                 payload: lrc,
                 storeLyricsAvailable: 1,
                 timeSyncedLyricsAvailable: 1,
                 downloadedCatalogLyricsAvailable: 1,
                 checksum: checksumEnabled ? LyricsSyncRow.fnv1a32(lrc) : 0,
-                extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil)
+                extendedLyricsAttribute: parsed.granularity == .word ? 1 : nil))
 
         case .appleCatalog, .plainOnly:
             break
@@ -243,13 +292,18 @@ enum LyricsSyncWriter {
         // lets the renderer pick the static layout immediately instead of
         // waiting on a timed payload that never arrives.
         let plain = parsed.granularity == .none ? cleaned : parsed.plainText
-        return LyricsSyncRow(
+        if mode == .plainOnly {
+            Logger.shared.log("[LyricsSync] mode is plainOnly — writing STATIC lyrics. Switch to 'Local TTML' in Settings to emit timed lyrics.")
+        } else {
+            Logger.shared.log("[LyricsSync] fell through to the static fallback (no usable timing for mode \(mode.rawValue))")
+        }
+        return applyOverride(LyricsSyncRow(
             payload: plain,
             storeLyricsAvailable: 1,
             timeSyncedLyricsAvailable: 0,
             downloadedCatalogLyricsAvailable: 0,
             checksum: 0,
-            extendedLyricsAttribute: nil)
+            extendedLyricsAttribute: nil))
     }
 
     // MARK: - Persistence
@@ -304,6 +358,11 @@ enum LyricsSyncWriter {
             Logger.shared.log("[LyricsSync] step failed: \(String(cString: sqlite3_errmsg(db)))")
             return false
         }
+
+        let kind = LyricsSyncFormat.isTTML(row.payload) ? "TTML"
+            : (row.payload.range(of: #"\[\d{1,3}:\d{2}"#, options: .regularExpression) != nil ? "LRC"
+            : (row.payload.isEmpty ? "empty" : "plain"))
+        Logger.shared.log("[LyricsSync] WROTE pid=\(itemPid) kind=\(kind) bytes=\(row.payload.count) flags(store/timed/cached)=\(row.storeLyricsAvailable)/\(row.timeSyncedLyricsAvailable)/\(row.downloadedCatalogLyricsAvailable) checksum=\(row.checksum) extLyrics=\(row.extendedLyricsAttribute.map(String.init) ?? "unset") cachedColumn=\(hasDownloadedColumn)")
 
         // `extended_lyrics_attribute` lives on item_store, which has
         // already been inserted by the time we get here, so this is an
