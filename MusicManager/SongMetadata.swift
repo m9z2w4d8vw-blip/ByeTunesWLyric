@@ -1105,11 +1105,18 @@ struct SongMetadata: Identifiable {
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let lyrics = (json?["plainLyrics"] as? String) ?? (json?["syncedLyrics"] as? String)
+            // Synced first. LRCLIB populates both fields; preferring
+            // plain meant the timestamps were dropped before any other
+            // code could see them.
+            let lyrics = (json?["syncedLyrics"] as? String) ?? (json?["plainLyrics"] as? String)
             
             if let l = lyrics, !l.isEmpty {
                 Logger.shared.log("[SongMetadata] Successfully fetched lyrics from LRCLIB")
-                return SongMetadata.cleanLyrics(l, title: title, artist: artist)
+                let hasTiming = LyricsSyncFormat.parseAny(l).granularity != .none
+                Logger.shared.log("[SongMetadata] LRCLIB payload timing: \(hasTiming ? "synced" : "plain")")
+                return hasTiming
+                    ? LyricsSyncFormat.cleanPreservingTiming(l, title: title, artist: artist)
+                    : SongMetadata.cleanLyrics(l, title: title, artist: artist)
             }
         } catch {
             Logger.shared.log("[SongMetadata] LRCLIB fetch failed: \(error)")
@@ -1734,7 +1741,9 @@ extension SongMetadata {
         switch result.service {
         case .lrclib:
             let raw = result.syncedLyrics ?? result.plainLyrics ?? ""
-            let cleaned = cleanLyrics(raw, title: songTitle, artist: songArtist)
+            let cleaned = LyricsSyncFormat.parseAny(raw).granularity != .none
+                ? LyricsSyncFormat.cleanPreservingTiming(raw, title: songTitle, artist: songArtist)
+                : cleanLyrics(raw, title: songTitle, artist: songArtist)
             return cleaned.isEmpty ? nil : cleaned
         case .musixmatch:
             guard let remoteID = result.remoteID else { return nil }

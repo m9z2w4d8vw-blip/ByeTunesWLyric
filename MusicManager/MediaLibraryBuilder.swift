@@ -878,7 +878,7 @@ class MediaLibraryBuilder {
                 : 0
             let masteredForItunes = (song.isMasteredForItunes || song.isAppleDigitalMaster) ? 1 : 0
             let matchRedownloadParamsEscaped = hasAppleCatalogMatch
-                ? "sagaId=\\(song.storeId)".replacingOccurrences(of: "'", with: "''")
+                ? "sagaId=\(song.storeId)".replacingOccurrences(of: "'", with: "''")
                 : ""
             let storeSagaId = hasAppleCatalogMatch ? song.storeId : 0
             let cloudStatus = hasAppleCatalogMatch ? 8 : 0
@@ -920,20 +920,19 @@ class MediaLibraryBuilder {
             """)
             
             
-            let appleSubscriptionLyrics = UserDefaults.standard.bool(forKey: "appleSubscriptionLyrics")
-            let resolvedLyricsText = appleSubscriptionLyrics ? "" : SongMetadata.cleanLyrics(song.lyrics ?? "", title: song.title, artist: song.artist)
-            let lyricsContent = resolvedLyricsText.replacingOccurrences(of: "'", with: "''")
+            // Payload and flags are chosen together by LyricsSyncWriter, so
+            // time_synced_lyrics_available can never again be 1 over a
+            // plain-text column. Bound parameters because a TTML payload is
+            // XML and hand-doubling ' is not enough for it.
+            let lyricsRow = LyricsSyncWriter.row(
+                rawLyrics: song.lyrics,
+                title: song.title,
+                artist: song.artist,
+                trackDurationMs: song.durationMs,
+                hasCatalogMatch: hasAppleCatalogMatch)
 
-            if columnExists(db: db, tableName: "lyrics", columnName: "downloaded_catalog_lyrics_available") {
-                try executeSQL(db, """
-                    INSERT OR REPLACE INTO lyrics (item_pid, lyrics, store_lyrics_available, time_synced_lyrics_available, downloaded_catalog_lyrics_available)
-                    VALUES (\(itemPid), '\(lyricsContent)', 1, 1, 0)
-                """)
-            } else {
-                try executeSQL(db, """
-                    INSERT OR REPLACE INTO lyrics (item_pid, lyrics, store_lyrics_available, time_synced_lyrics_available)
-                    VALUES (\(itemPid), '\(lyricsContent)', 1, 1)
-                """)
+            if !LyricsSyncWriter.write(db: db, itemPid: itemPid, row: lyricsRow) {
+                Logger.shared.log("[MediaLibraryBuilder] lyrics write failed for \(song.title)")
             }
             
             try executeSQL(db, "INSERT OR REPLACE INTO chapter (item_pid) VALUES (\(itemPid))")
