@@ -57,6 +57,8 @@
 	<array>
 		<string>com.EduAlexxis.MusicManager.metadataRefresh</string>
 	</array>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Used to follow along with what the Music app is playing so ByeTunes can show time-synced lyrics for your injected songs. Read-only — your library is never modified.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Used to find your device's RemotePairing tunnel service on the local network when connecting over LocalDevVPN.</string>
 	<key>NSBonjourServices</key>

@@ -934,6 +934,18 @@ class MediaLibraryBuilder {
             if !LyricsSyncWriter.write(db: db, itemPid: itemPid, row: lyricsRow) {
                 Logger.shared.log("[MediaLibraryBuilder] lyrics write failed for \(song.title)")
             }
+
+            // Keep a timed copy outside the media database. The `lyrics`
+            // table has nowhere to put timing on iOS 17 and the Music app
+            // renders that column as static text regardless, so the
+            // karaoke view reads this sidecar instead. Keyed on itemPid,
+            // which is the same number MPMediaItem reports as
+            // persistentID.
+            LyricsSyncStore.shared.save(
+                rawLyrics: song.lyrics,
+                itemPid: itemPid,
+                title: song.title,
+                artist: song.artist)
             
             try executeSQL(db, "INSERT OR REPLACE INTO chapter (item_pid) VALUES (\(itemPid))")
             

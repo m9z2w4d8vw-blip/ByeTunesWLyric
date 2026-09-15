@@ -1,0 +1,91 @@
+diff --git a/MusicManager/Info.plist b/MusicManager/Info.plist
+index e348ef9..3312169 100644
+--- a/MusicManager/Info.plist
++++ b/MusicManager/Info.plist
+@@ -57,6 +57,8 @@
+ 	<array>
+ 		<string>com.EduAlexxis.MusicManager.metadataRefresh</string>
+ 	</array>
++	<key>NSAppleMusicUsageDescription</key>
++	<string>Used to follow along with what the Music app is playing so ByeTunes can show time-synced lyrics for your injected songs. Read-only — your library is never modified.</string>
+ 	<key>NSLocalNetworkUsageDescription</key>
+ 	<string>Used to find your device's RemotePairing tunnel service on the local network when connecting over LocalDevVPN.</string>
+ 	<key>NSBonjourServices</key>
+diff --git a/MusicManager/MediaLibraryBuilder.swift b/MusicManager/MediaLibraryBuilder.swift
+index 46eca47..3054321 100644
+--- a/MusicManager/MediaLibraryBuilder.swift
++++ b/MusicManager/MediaLibraryBuilder.swift
+@@ -934,6 +934,18 @@ class MediaLibraryBuilder {
+             if !LyricsSyncWriter.write(db: db, itemPid: itemPid, row: lyricsRow) {
+                 Logger.shared.log("[MediaLibraryBuilder] lyrics write failed for \(song.title)")
+             }
++
++            // Keep a timed copy outside the media database. The `lyrics`
++            // table has nowhere to put timing on iOS 17 and the Music app
++            // renders that column as static text regardless, so the
++            // karaoke view reads this sidecar instead. Keyed on itemPid,
++            // which is the same number MPMediaItem reports as
++            // persistentID.
++            LyricsSyncStore.shared.save(
++                rawLyrics: song.lyrics,
++                itemPid: itemPid,
++                title: song.title,
++                artist: song.artist)
+             
+             try executeSQL(db, "INSERT OR REPLACE INTO chapter (item_pid) VALUES (\(itemPid))")
+             
+diff --git a/MusicManager/SettingsView.swift b/MusicManager/SettingsView.swift
+index a924981..530d8b2 100644
+--- a/MusicManager/SettingsView.swift
++++ b/MusicManager/SettingsView.swift
+@@ -1103,6 +1103,7 @@ private struct DownloaderSettingsScreen: View {
+     @AppStorage("lyricsFlagOverride") private var lyricsFlagOverride = ""
+     @State private var diagnosticsRunning = false
+     @State private var diagnosticsStatus = ""
++    @State private var showingKaraoke = false
+ 
+     private var selectedLyricsMode: LyricsDeliveryMode {
+         LyricsDeliveryMode(rawValue: lyricsDeliveryMode) ?? LyricsDeliveryMode.current
+@@ -1412,6 +1413,42 @@ private struct DownloaderSettingsScreen: View {
+ 
+                         Divider().padding(.leading, 56)
+ 
++                        // MARK: Karaoke view
++
++                        Button {
++                            showingKaraoke = true
++                        } label: {
++                            HStack {
++                                Image(systemName: "music.mic")
++                                    .font(.body)
++                                    .foregroundColor(.primary)
++                                    .frame(width: 28)
++
++                                VStack(alignment: .leading, spacing: 2) {
++                                    Text("Time-Synced Lyrics")
++                                        .font(.body)
++                                        .foregroundColor(.primary)
++                                    Text("Follows the Music app. \(LyricsSyncStore.shared.storedCount) tracks stored.")
++                                        .font(.caption)
++                                        .foregroundColor(.secondary)
++                                }
++
++                                Spacer()
++
++                                Image(systemName: "chevron.right")
++                                    .font(.caption)
++                                    .foregroundColor(Color(.systemGray3))
++                            }
++                        }
++                        .buttonStyle(.plain)
++                        .padding(.vertical, 10)
++                        .padding(.horizontal, 16)
++                        .sheet(isPresented: $showingKaraoke) {
++                            KaraokeLyricsView()
++                        }
++
++                        Divider().padding(.leading, 56)
++
+                         // MARK: Diagnostics
+ 
+                         Button {

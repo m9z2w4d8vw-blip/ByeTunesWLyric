@@ -1103,6 +1103,7 @@ private struct DownloaderSettingsScreen: View {
     @AppStorage("lyricsFlagOverride") private var lyricsFlagOverride = ""
     @State private var diagnosticsRunning = false
     @State private var diagnosticsStatus = ""
+    @State private var showingKaraoke = false
 
     private var selectedLyricsMode: LyricsDeliveryMode {
         LyricsDeliveryMode(rawValue: lyricsDeliveryMode) ?? LyricsDeliveryMode.current
@@ -1409,6 +1410,42 @@ private struct DownloaderSettingsScreen: View {
                         }
                         .padding(.vertical, 10)
                         .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 56)
+
+                        // MARK: Karaoke view
+
+                        Button {
+                            showingKaraoke = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "music.mic")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .frame(width: 28)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Time-Synced Lyrics")
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                    Text("Follows the Music app. \(LyricsSyncStore.shared.storedCount) tracks stored.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(Color(.systemGray3))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 16)
+                        .sheet(isPresented: $showingKaraoke) {
+                            KaraokeLyricsView()
+                        }
 
                         Divider().padding(.leading, 56)
 
