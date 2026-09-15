@@ -80,8 +80,8 @@ struct KaraokeLyricsView: View {
             clock.start()
         }
         .onDisappear { clock.stop() }
-        .onChange(of: clock.nowPlayingID) { _, _ in loadLyricsIfNeeded() }
-        .onChange(of: clock.nowPlayingTitle) { _, _ in loadLyricsIfNeeded() }
+        .onChange(of: clock.nowPlayingID) { _ in loadLyricsIfNeeded() }
+        .onChange(of: clock.nowPlayingTitle) { _ in loadLyricsIfNeeded() }
     }
 
     // MARK: - Scroller
@@ -106,7 +106,7 @@ struct KaraokeLyricsView: View {
                 .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .onChange(of: activeIndex) { _, newValue in
+            .onChange(of: activeIndex) { newValue in
                 guard newValue >= 0, newValue != lastAutoScrollLine else { return }
                 lastAutoScrollLine = newValue
                 withAnimation(.easeInOut(duration: 0.45)) {
@@ -150,6 +150,9 @@ struct KaraokeLyricsView: View {
     @ViewBuilder
     private func wordSweep(_ line: TimedLine) -> some View {
         let pos = clock.positionMs
+        // FlowLayout is the one already declared in SettingsView.swift —
+        // same `spacing` API, and a second copy in the same module is a
+        // redeclaration error.
         FlowLayout(spacing: 0) {
             ForEach(Array(line.syllables.enumerated()), id: \.offset) { _, syl in
                 let started = pos >= syl.startMs
@@ -235,46 +238,5 @@ struct KaraokeLyricsView: View {
             "[Karaoke] pid=\(id) \"\(clock.nowPlayingTitle)\" -> " +
             (lyrics == nil ? "no stored lyrics"
                            : "\(lyrics!.lines.count) lines, \(lyrics!.granularity.rawValue)-timed"))
-    }
-}
-
-// MARK: - Wrapping layout
-
-/// A minimal wrapping HStack. `HStack` will not wrap and `LazyVGrid`
-/// forces equal-width columns, neither of which suits variable-width
-/// words that have to sit on a text baseline.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 0
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        for s in subviews {
-            let size = s.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
-                       subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for s in subviews {
-            let size = s.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX, x > bounds.minX {
-                x = bounds.minX
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
     }
 }
